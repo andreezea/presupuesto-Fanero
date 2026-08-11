@@ -310,7 +310,7 @@ if "usuario_actual" not in st.session_state:
 
 if st.session_state.usuario_actual is None:
     st.title("📊 Control de Presupuesto")
-    st.caption("Back Office Regional — Inicia sesión")
+    st.caption("Fanero — Inicia sesión")
 
     with st.form("form_login"):
         usuario_in = st.text_input("Usuario")
@@ -343,7 +343,7 @@ mis_departamentos = DEPARTAMENTOS if rol_actual in ("ADMIN", "VISOR") else usuar
 # ============================================================================
 
 st.sidebar.title("📊 Control de Presupuesto")
-st.sidebar.caption("Back Office Regional")
+st.sidebar.caption("Fanero")
 st.sidebar.markdown(f"**{usuario_actual['nombre']}**")
 if es_admin:
     st.sidebar.caption("Administrador")
