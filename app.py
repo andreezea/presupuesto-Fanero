@@ -200,14 +200,31 @@ def guardar_gasto(departamento, fecha, tipo, subtipo, monto, descripcion) -> Non
     ).execute()
 
 
+def actualizar_gasto(gasto_id: str, departamento, fecha, tipo, subtipo, monto, descripcion) -> None:
+    supabase.table("gastos_diarios_dep").update(
+        {
+            "departamento": departamento,
+            "fecha": fecha,
+            "tipo": tipo,
+            "subtipo": subtipo,
+            "monto": monto,
+            "descripcion": descripcion,
+        }
+    ).eq("id", gasto_id).execute()
+
+
 def eliminar_gasto(gasto_id: str) -> None:
     supabase.table("gastos_diarios_dep").delete().eq("id", gasto_id).execute()
+
+
+def eliminar_presupuesto(presupuesto_id: str) -> None:
+    supabase.table("presupuesto_mensual_dep").delete().eq("id", presupuesto_id).execute()
 
 
 def df_presupuesto(anio: int, mes: int, departamento: str | None = None) -> pd.DataFrame:
     query = (
         supabase.table("presupuesto_mensual_dep")
-        .select("departamento, anio, mes, tipo, subtipo, monto")
+        .select("id, departamento, anio, mes, tipo, subtipo, monto")
         .eq("anio", anio)
         .eq("mes", mes)
     )
@@ -215,7 +232,7 @@ def df_presupuesto(anio: int, mes: int, departamento: str | None = None) -> pd.D
         query = query.eq("departamento", departamento)
     data = query.execute().data
     if not data:
-        return pd.DataFrame(columns=["departamento", "anio", "mes", "tipo", "subtipo", "monto"])
+        return pd.DataFrame(columns=["id", "departamento", "anio", "mes", "tipo", "subtipo", "monto"])
     return pd.DataFrame(data)
 
 
@@ -627,14 +644,27 @@ elif pagina == "💰 Registrar presupuesto mensual":
         tabla["Tipo de gasto"] = tabla.apply(
             lambda r: f"{r['tipo']} - {r['subtipo']}" if r["subtipo"] else r["tipo"], axis=1
         )
-        tabla = tabla.rename(columns={"departamento": "Departamento", "monto": "Presupuesto"})
+        tabla_vista = tabla.rename(columns={"departamento": "Departamento", "monto": "Presupuesto"}).sort_values(
+            ["Departamento", "Tipo de gasto"]
+        )
         st.dataframe(
-            tabla[["Departamento", "Tipo de gasto", "Presupuesto"]]
-            .sort_values(["Departamento", "Tipo de gasto"])
-            .style.format({"Presupuesto": "S/ {:,.2f}"}),
+            tabla_vista[["Departamento", "Tipo de gasto", "Presupuesto"]].style.format({"Presupuesto": "S/ {:,.2f}"}),
             use_container_width=True,
             hide_index=True,
         )
+
+        st.caption("💡 Para modificar un monto, vuelve a registrar el mismo Departamento + Tipo + Mes arriba: se actualiza automáticamente en vez de duplicarse.")
+
+        with st.expander("🗑️ Eliminar un presupuesto registrado"):
+            opciones_pres = {
+                f"{row.Departamento} · {row['Tipo de gasto']} · {formato_soles(row.Presupuesto)}": row.id
+                for row in tabla_vista.itertuples()
+            }
+            seleccion_pres = st.selectbox("Selecciona el presupuesto a eliminar", options=list(opciones_pres.keys()))
+            if st.button("🗑️ Eliminar presupuesto seleccionado"):
+                eliminar_presupuesto(opciones_pres[seleccion_pres])
+                st.success("Presupuesto eliminado.")
+                st.rerun()
 
 # ============================================================================
 # PÁGINA: REGISTRAR GASTO DIARIO
@@ -745,12 +775,77 @@ elif pagina == "📋 Historial de gastos":
 
         if not es_visor:
             st.markdown("---")
-            st.subheader("Eliminar un registro")
+            st.subheader("✏️ Editar un registro")
+
+            opciones_editar = {
+                f"#{str(row.id)[:8]} · {row.fecha} · {row.departamento} · {row.tipo} · S/ {row.monto:,.2f}": row.id
+                for row in tabla.itertuples()
+            }
+            seleccion_editar = st.selectbox("Selecciona el registro a editar", options=list(opciones_editar.keys()), key="select_editar_gasto")
+            gasto_id_editar = opciones_editar[seleccion_editar]
+            fila_actual = tabla[tabla["id"] == gasto_id_editar].iloc[0]
+
+            # El Tipo va FUERA del formulario, igual que en "Registrar gasto diario",
+            # para que el Subtipo aparezca al instante si cambias a Acciones Comerciales.
+            tipo_editar = st.selectbox(
+                "Tipo de gasto",
+                options=TIPOS_GASTO,
+                index=TIPOS_GASTO.index(fila_actual["tipo"]) if fila_actual["tipo"] in TIPOS_GASTO else 0,
+                key="tipo_editar_gasto",
+            )
+            subtipo_editar = None
+            if tipo_editar == "Acciones Comerciales":
+                idx_sub = (
+                    SUBTIPOS_ACCIONES_COMERCIALES.index(fila_actual["subtipo"])
+                    if fila_actual["subtipo"] in SUBTIPOS_ACCIONES_COMERCIALES
+                    else 0
+                )
+                subtipo_editar = st.selectbox(
+                    "Subtipo de Acciones Comerciales", options=SUBTIPOS_ACCIONES_COMERCIALES, index=idx_sub, key="subtipo_editar_gasto"
+                )
+
+            with st.form("form_editar_gasto"):
+                col_e1, col_e2 = st.columns(2)
+                with col_e1:
+                    depto_editar = st.selectbox(
+                        "Departamento",
+                        options=mis_departamentos,
+                        index=mis_departamentos.index(fila_actual["departamento"]) if fila_actual["departamento"] in mis_departamentos else 0,
+                    )
+                    fecha_editar = st.date_input(
+                        "Fecha", value=pd.to_datetime(fila_actual["fecha"]).date(), format="YYYY-MM-DD"
+                    )
+                with col_e2:
+                    monto_editar = st.number_input(
+                        "Monto gastado (S/)", min_value=0.0, step=10.0, format="%.2f", value=float(fila_actual["monto"])
+                    )
+                    descripcion_editar = st.text_input(
+                        "Descripción / detalle (opcional)", value=fila_actual["descripcion"] or ""
+                    )
+
+                st.caption(f"Vas a actualizar a: **{tipo_editar}{f' - {subtipo_editar}' if subtipo_editar else ''}**")
+                guardar_edicion = st.form_submit_button("💾 Guardar cambios", type="primary")
+
+                if guardar_edicion:
+                    if monto_editar <= 0:
+                        st.warning("Ingresa un monto de gasto mayor a cero.")
+                    elif tipo_editar == "Acciones Comerciales" and not subtipo_editar:
+                        st.warning("Selecciona el Subtipo (Dispersión o Incentivos).")
+                    else:
+                        actualizar_gasto(
+                            gasto_id_editar, depto_editar, fecha_editar.isoformat(), tipo_editar,
+                            subtipo_editar, float(monto_editar), descripcion_editar or None,
+                        )
+                        st.success("Registro actualizado correctamente.")
+                        st.rerun()
+
+            st.markdown("---")
+            st.subheader("🗑️ Eliminar un registro")
             opciones = {
                 f"#{str(row.id)[:8]} · {row.fecha} · {row.departamento} · {row.tipo} · S/ {row.monto:,.2f}": row.id
                 for row in tabla.itertuples()
             }
-            seleccion = st.selectbox("Selecciona el registro a eliminar", options=list(opciones.keys()))
+            seleccion = st.selectbox("Selecciona el registro a eliminar", options=list(opciones.keys()), key="select_eliminar_gasto")
             if st.button("🗑️ Eliminar registro seleccionado"):
                 eliminar_gasto(opciones[seleccion])
                 st.success("Registro eliminado.")
