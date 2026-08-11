@@ -334,7 +334,7 @@ if st.sidebar.button("Cerrar sesión"):
 
 st.sidebar.markdown("---")
 
-opciones_menu = ["📈 Resumen", "📑 Cuadro Consolidado", "💰 Registrar presupuesto mensual", "🧾 Registrar gasto diario", "📋 Historial de gastos"]
+opciones_menu = ["📊 Cuadro Consolidado", "💰 Registrar presupuesto mensual", "🧾 Registrar gasto diario", "📋 Historial de gastos"]
 if es_admin:
     opciones_menu.append("👥 Gestionar Back Office")
 
@@ -384,37 +384,6 @@ def presupuesto_por_tipo(df_pres_depto: pd.DataFrame, tipo: str, subtipo: str | 
     filtro = df_pres_depto["tipo"] == tipo
     filtro = filtro & (df_pres_depto["subtipo"] == (subtipo or ""))
     return df_pres_depto.loc[filtro, "monto"].sum()
-
-
-def tabla_detalle_tipo(departamentos: list[str], pres_df: pd.DataFrame, gas_df: pd.DataFrame, mostrar_departamento: bool) -> pd.DataFrame:
-    filas = []
-    for depto in departamentos:
-        pres_depto_df = pres_df[pres_df["departamento"] == depto] if not pres_df.empty else pres_df
-        gas_depto_df = gas_df[gas_df["departamento"] == depto] if not gas_df.empty else gas_df
-        for etiqueta, tipo, subtipo in TIPOS_DETALLE:
-            pres = presupuesto_por_tipo(pres_depto_df, tipo, subtipo)
-            gas = gastado_por_tipo(gas_depto_df, tipo, subtipo)
-            disp = pres - gas
-            p = (gas / pres * 100) if pres > 0 else 0
-            fila = {
-                "Tipo de gasto": etiqueta,
-                "Presupuesto": pres,
-                "Gastado": gas,
-                "Disponible": disp,
-                "% Ejecución": f"{semaforo(p)} {p:.1f}%",
-            }
-            if mostrar_departamento:
-                fila = {"Departamento": depto, **fila}
-            filas.append(fila)
-    return pd.DataFrame(filas)
-
-
-def mostrar_tabla_detalle(tabla: pd.DataFrame) -> None:
-    st.dataframe(
-        tabla.style.format({"Presupuesto": "S/ {:,.2f}", "Gastado": "S/ {:,.2f}", "Disponible": "S/ {:,.2f}"}),
-        use_container_width=True,
-        hide_index=True,
-    )
 
 
 TABLA_CSS = """
@@ -552,9 +521,9 @@ def construir_tabla_pivote_html(departamentos: list[str], pres_df: pd.DataFrame,
     return dedent(html)
 
 
-if pagina == "📈 Resumen":
-    st.title("Resumen de Presupuesto")
-    st.caption(f"{MESES[mes_sel - 1]} {anio_sel}")
+if pagina == "📊 Cuadro Consolidado":
+    st.title("Cuadro Consolidado")
+    st.caption(f"{MESES[mes_sel - 1]} {anio_sel} — Activaciones · Merch · Acciones Comerciales (Dispersión / Incentivos)")
 
     opciones_vista = list(mis_departamentos)
     if es_admin:
@@ -569,10 +538,12 @@ if pagina == "📈 Resumen":
 
     if depto_vista in (FANERO, "Mis departamentos (Total)"):
         alcance = DEPARTAMENTOS if depto_vista == FANERO else mis_departamentos
+        etiqueta_total = FANERO if depto_vista == FANERO else "TOTAL"
         presupuesto_total = pres_df.loc[pres_df["departamento"].isin(alcance), "monto"].sum() if not pres_df.empty else 0
         gastado_total = gas_df.loc[gas_df["departamento"].isin(alcance), "monto"].sum() if not gas_df.empty else 0
     else:
         alcance = [depto_vista]
+        etiqueta_total = "TOTAL"
         presupuesto_total = pres_df.loc[pres_df["departamento"] == depto_vista, "monto"].sum() if not pres_df.empty else 0
         gastado_total = gas_df.loc[gas_df["departamento"] == depto_vista, "monto"].sum() if not gas_df.empty else 0
 
@@ -590,69 +561,7 @@ if pagina == "📈 Resumen":
 
     st.markdown("---")
 
-    if len(alcance) > 1:
-        st.subheader("Detalle por departamento")
-        filas = []
-        for depto in alcance:
-            pres = pres_df.loc[pres_df["departamento"] == depto, "monto"].sum() if not pres_df.empty else 0
-            gas = gas_df.loc[gas_df["departamento"] == depto, "monto"].sum() if not gas_df.empty else 0
-            disp = pres - gas
-            p = (gas / pres * 100) if pres > 0 else 0
-            filas.append(
-                {
-                    "Departamento": depto,
-                    "Presupuesto": pres,
-                    "Gastado": gas,
-                    "Disponible": disp,
-                    "% Ejecución": f"{semaforo(p)} {p:.1f}%",
-                }
-            )
-        tabla = pd.DataFrame(filas)
-        st.dataframe(
-            tabla.style.format({"Presupuesto": "S/ {:,.2f}", "Gastado": "S/ {:,.2f}", "Disponible": "S/ {:,.2f}"}),
-            use_container_width=True,
-            hide_index=True,
-        )
-        st.bar_chart(tabla.set_index("Departamento")[["Presupuesto", "Gastado"]])
-
-        st.info("💡 Para ver el detalle por tipo de gasto (Activaciones, Merch, Acciones Comerciales) de cada departamento, ve a **📑 Cuadro Consolidado** en el menú.")
-    else:
-        st.subheader("Detalle por tipo de gasto")
-        st.caption("Activaciones · Merch · Acciones Comerciales (Dispersión / Incentivos)")
-        tabla_tipo = tabla_detalle_tipo(alcance, pres_df, gas_df, mostrar_departamento=False)
-        mostrar_tabla_detalle(tabla_tipo)
-
-        del_depto = gas_df[gas_df["departamento"] == alcance[0]] if not gas_df.empty else gas_df
-        if not del_depto.empty:
-            st.bar_chart(tabla_tipo.set_index("Tipo de gasto")[["Gastado"]])
-
-# ============================================================================
-# PÁGINA: CUADRO CONSOLIDADO
-# ============================================================================
-
-elif pagina == "📑 Cuadro Consolidado":
-    st.title("Cuadro consolidado por departamento y tipo de gasto")
-    st.caption(f"{MESES[mes_sel - 1]} {anio_sel} — Activaciones · Merch · Acciones Comerciales (Dispersión / Incentivos)")
-
-    opciones_vista_cc = list(mis_departamentos)
-    if es_admin:
-        opciones_vista_cc = [FANERO] + opciones_vista_cc
-    elif len(mis_departamentos) > 1:
-        opciones_vista_cc = ["Mis departamentos (Total)"] + opciones_vista_cc
-
-    vista_cc = st.selectbox("Alcance", options=opciones_vista_cc, key="alcance_cuadro_consolidado")
-
-    if vista_cc in (FANERO, "Mis departamentos (Total)"):
-        alcance_cc = DEPARTAMENTOS if vista_cc == FANERO else mis_departamentos
-        etiqueta_total_cc = FANERO if vista_cc == FANERO else "TOTAL"
-    else:
-        alcance_cc = [vista_cc]
-        etiqueta_total_cc = "TOTAL"
-
-    pres_df_cc = df_presupuesto(anio_sel, mes_sel)
-    gas_df_cc = df_gastos(anio_sel, mes_sel)
-
-    html_pivote = construir_tabla_pivote_html(alcance_cc, pres_df_cc, gas_df_cc, etiqueta_total=etiqueta_total_cc)
+    html_pivote = construir_tabla_pivote_html(alcance, pres_df, gas_df, etiqueta_total=etiqueta_total)
     st.markdown(html_pivote, unsafe_allow_html=True)
 
 # ============================================================================
