@@ -33,7 +33,7 @@ from supabase import create_client, Client
 # ============================================================================
 
 st.set_page_config(
-    page_title="Control de Presupuesto · Back Office",
+    page_title="Control de Presupuesto · Fanero",
     page_icon="📊",
     layout="wide",
 )
@@ -415,7 +415,8 @@ def presupuesto_por_tipo(df_pres_depto: pd.DataFrame, tipo: str, subtipo: str | 
 
 TABLA_CSS = """
 <style>
-.tabla-pivote-wrap { overflow-x: auto; margin: 0.5rem 0 1.5rem 0; }
+html, body { overflow-x: hidden !important; }
+.tabla-pivote-wrap { overflow-x: auto; max-width: 100%; margin: 0.5rem 0 1.5rem 0; }
 .tabla-pivote {
     border-collapse: collapse;
     width: 100%;
@@ -657,8 +658,8 @@ elif pagina == "💰 Registrar presupuesto mensual":
 
         with st.expander("🗑️ Eliminar un presupuesto registrado"):
             opciones_pres = {
-                f"{row.Departamento} · {row['Tipo de gasto']} · {formato_soles(row.Presupuesto)}": row.id
-                for row in tabla_vista.itertuples()
+                f"{row['Departamento']} · {row['Tipo de gasto']} · {formato_soles(row['Presupuesto'])}": row["id"]
+                for _, row in tabla_vista.iterrows()
             }
             seleccion_pres = st.selectbox("Selecciona el presupuesto a eliminar", options=list(opciones_pres.keys()))
             if st.button("🗑️ Eliminar presupuesto seleccionado"):
