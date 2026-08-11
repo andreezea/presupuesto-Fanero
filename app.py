@@ -582,24 +582,31 @@ elif pagina == "💰 Registrar presupuesto mensual":
     st.title("Registrar presupuesto mensual")
     st.caption("Asigna o actualiza el presupuesto del mes para cada tipo de gasto de tu departamento.")
 
+    # El Tipo de gasto va FUERA del formulario a propósito: así, en cuanto
+    # eliges "Acciones Comerciales", la página se actualiza al instante y
+    # aparece el campo de Subtipo (Dispersión/Incentivos) antes de guardar.
+    tipo = st.selectbox("Tipo de gasto", options=TIPOS_GASTO, key="tipo_presupuesto")
+    subtipo = None
+    if tipo == "Acciones Comerciales":
+        subtipo = st.selectbox("Subtipo de Acciones Comerciales", options=SUBTIPOS_ACCIONES_COMERCIALES, key="subtipo_presupuesto")
+
     with st.form("form_presupuesto"):
         col1, col2 = st.columns(2)
         with col1:
             departamento = st.selectbox("Departamento", options=mis_departamentos)
             anio = st.number_input("Año", min_value=2000, max_value=2100, value=anio_sel, step=1)
-            mes = st.selectbox("Mes", options=list(range(1, 13)), format_func=lambda m: MESES[m - 1], index=mes_sel - 1)
         with col2:
-            tipo = st.selectbox("Tipo de gasto", options=TIPOS_GASTO)
-            subtipo = None
-            if tipo == "Acciones Comerciales":
-                subtipo = st.selectbox("Subtipo de Acciones Comerciales", options=SUBTIPOS_ACCIONES_COMERCIALES)
+            mes = st.selectbox("Mes", options=list(range(1, 13)), format_func=lambda m: MESES[m - 1], index=mes_sel - 1)
             monto = st.number_input("Presupuesto Asignado (S/)", min_value=0.0, step=100.0, format="%.2f")
 
+        st.caption(f"Vas a registrar el presupuesto de: **{tipo}{f' - {subtipo}' if subtipo else ''}**")
         enviado = st.form_submit_button("Guardar presupuesto", type="primary")
 
         if enviado:
             if monto <= 0:
                 st.warning("Ingresa un monto de presupuesto mayor a cero.")
+            elif tipo == "Acciones Comerciales" and not subtipo:
+                st.warning("Selecciona el Subtipo (Dispersión o Incentivos).")
             else:
                 guardar_presupuesto(departamento, int(anio), int(mes), tipo, subtipo, float(monto))
                 etiqueta_tipo = f"{tipo} - {subtipo}" if subtipo else tipo
@@ -637,24 +644,31 @@ elif pagina == "🧾 Registrar gasto diario":
     st.title("Registrar gasto diario")
     st.caption("Registra activaciones, merch o acciones comerciales (dispersión / incentivos) del día.")
 
+    # El Tipo de gasto va FUERA del formulario a propósito: así, en cuanto
+    # eliges "Acciones Comerciales", la página se actualiza al instante y
+    # aparece el campo de Subtipo (Dispersión/Incentivos) antes de guardar.
+    tipo = st.selectbox("Tipo de gasto", options=TIPOS_GASTO, key="tipo_gasto_diario")
+    subtipo = None
+    if tipo == "Acciones Comerciales":
+        subtipo = st.selectbox("Subtipo de Acciones Comerciales", options=SUBTIPOS_ACCIONES_COMERCIALES, key="subtipo_gasto_diario")
+
     with st.form("form_gasto", clear_on_submit=True):
         col1, col2 = st.columns(2)
         with col1:
             departamento = st.selectbox("Departamento", options=mis_departamentos)
             fecha = st.date_input("Fecha", value=hoy, format="YYYY-MM-DD")
-            tipo = st.selectbox("Tipo de gasto", options=TIPOS_GASTO)
         with col2:
-            subtipo = None
-            if tipo == "Acciones Comerciales":
-                subtipo = st.selectbox("Subtipo de Acciones Comerciales", options=SUBTIPOS_ACCIONES_COMERCIALES)
             monto = st.number_input("Monto gastado (S/)", min_value=0.0, step=10.0, format="%.2f")
             descripcion = st.text_input("Descripción / detalle (opcional)")
 
+        st.caption(f"Vas a registrar: **{tipo}{f' - {subtipo}' if subtipo else ''}**")
         enviado = st.form_submit_button("Guardar gasto", type="primary")
 
         if enviado:
             if monto <= 0:
                 st.warning("Ingresa un monto de gasto mayor a cero.")
+            elif tipo == "Acciones Comerciales" and not subtipo:
+                st.warning("Selecciona el Subtipo (Dispersión o Incentivos).")
             else:
                 guardar_gasto(departamento, fecha.isoformat(), tipo, subtipo, float(monto), descripcion or None)
                 st.success(f"Gasto guardado: {departamento} — {tipo}{f' ({subtipo})' if subtipo else ''} — {formato_soles(monto)}")
@@ -755,27 +769,39 @@ elif pagina == "👥 Gestionar Back Office":
     st.caption("Registra cada usuario, su rol, y (si es Back Office) sus departamentos.")
 
     with st.expander("➕ Registrar nuevo usuario", expanded=True):
+        # El Rol va FUERA del formulario a propósito: así, en cuanto eliges
+        # "Back Office", la página se actualiza al instante y aparece el
+        # selector de departamentos antes de guardar.
+        rol_nuevo = st.selectbox(
+            "Rol",
+            options=["BACKOFFICE", "VISOR", "ADMIN"],
+            format_func=lambda r: {
+                "BACKOFFICE": "👤 Back Office (registra su(s) departamento(s))",
+                "VISOR": "👁️ Visor (solo ve el Cuadro Consolidado, sin editar)",
+                "ADMIN": "🛡️ Administrador (acceso total)",
+            }[r],
+            key="rol_nuevo_usuario",
+        )
+        deptos_nuevo = []
+        if rol_nuevo == "BACKOFFICE":
+            deptos_nuevo = st.multiselect(
+                "Departamento(s) del que es responsable", options=DEPARTAMENTOS, key="deptos_nuevo_usuario"
+            )
+
         with st.form("form_nuevo_usuario"):
             col1, col2 = st.columns(2)
             with col1:
                 nombre = st.text_input("Nombre completo")
                 usuario_login = st.text_input("Nombre de usuario (para iniciar sesión)")
-                password = st.text_input("Contraseña", type="password")
             with col2:
-                rol_nuevo = st.selectbox(
-                    "Rol",
-                    options=["BACKOFFICE", "VISOR", "ADMIN"],
-                    format_func=lambda r: {
-                        "BACKOFFICE": "👤 Back Office (registra su(s) departamento(s))",
-                        "VISOR": "👁️ Visor (solo ve el Cuadro Consolidado, sin editar)",
-                        "ADMIN": "🛡️ Administrador (acceso total)",
-                    }[r],
-                )
-                deptos_nuevo = []
-                if rol_nuevo == "BACKOFFICE":
-                    deptos_nuevo = st.multiselect(
-                        "Departamento(s) del que es responsable", options=DEPARTAMENTOS
-                    )
+                password = st.text_input("Contraseña", type="password")
+
+            etiqueta_rol_preview = {
+                "BACKOFFICE": "👤 Back Office",
+                "VISOR": "👁️ Visor",
+                "ADMIN": "🛡️ Administrador",
+            }[rol_nuevo]
+            st.caption(f"Rol seleccionado: **{etiqueta_rol_preview}**" + (f" — Departamentos: {', '.join(deptos_nuevo)}" if deptos_nuevo else ""))
 
             crear = st.form_submit_button("Crear usuario", type="primary")
 
