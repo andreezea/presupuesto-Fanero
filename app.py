@@ -691,12 +691,25 @@ elif pagina == "📋 Historial de gastos":
     if es_visor:
         st.caption("Vista de solo lectura — fecha, tipo de gasto, descripción y monto registrados por cada Back Office.")
 
-    depto_filtro = st.selectbox("Filtrar por departamento", options=["Todos"] + list(mis_departamentos))
+    col_f1, col_f2, col_f3 = st.columns(3)
+    with col_f1:
+        depto_filtro = st.selectbox("Filtrar por departamento", options=["Todos"] + list(mis_departamentos))
+    with col_f2:
+        tipo_filtro = st.selectbox("Filtrar por tipo de gasto", options=["Todos"] + TIPOS_GASTO)
+    with col_f3:
+        subtipo_filtro = "Todos"
+        if tipo_filtro == "Acciones Comerciales":
+            subtipo_filtro = st.selectbox("Filtrar por subtipo", options=["Todos"] + SUBTIPOS_ACCIONES_COMERCIALES)
+
     depto_query = None if depto_filtro == "Todos" else depto_filtro
 
     tabla = df_gastos(anio_sel, mes_sel, depto_query)
     if not tabla.empty:
         tabla = tabla[tabla["departamento"].isin(mis_departamentos)]
+        if tipo_filtro != "Todos":
+            tabla = tabla[tabla["tipo"] == tipo_filtro]
+        if subtipo_filtro != "Todos":
+            tabla = tabla[tabla["subtipo"] == subtipo_filtro]
     st.caption(f"{len(tabla)} registro(s) — {MESES[mes_sel - 1]} {anio_sel}")
 
     if tabla.empty:
