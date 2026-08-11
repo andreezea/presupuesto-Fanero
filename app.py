@@ -121,7 +121,7 @@ def obtener_departamentos_de(usuario_id: str) -> list[str]:
     return [r["departamento"] for r in res.data]
 
 
-def crear_usuario(nombre: str, usuario: str, password: str, es_admin: bool, departamentos: list[str]) -> None:
+def crear_usuario(nombre: str, usuario: str, password: str, rol: str, departamentos: list[str]) -> None:
     h, salt = hash_password(password)
     res = (
         supabase.table("usuarios_regional")
@@ -131,13 +131,13 @@ def crear_usuario(nombre: str, usuario: str, password: str, es_admin: bool, depa
                 "usuario": usuario,
                 "password_hash": h,
                 "salt": salt,
-                "es_admin": es_admin,
+                "rol": rol,
             }
         )
         .execute()
     )
     nuevo_id = res.data[0]["id"]
-    if not es_admin and departamentos:
+    if rol == "BACKOFFICE" and departamentos:
         supabase.table("usuario_departamentos").insert(
             [{"usuario_id": nuevo_id, "departamento": d} for d in departamentos]
         ).execute()
@@ -164,7 +164,7 @@ def listar_usuarios() -> list[dict]:
     res = supabase.table("usuarios_regional").select("*").order("creado_en").execute()
     usuarios = res.data
     for u in usuarios:
-        u["departamentos"] = [] if u["es_admin"] else obtener_departamentos_de(u["id"])
+        u["departamentos"] = obtener_departamentos_de(u["id"]) if u["rol"] == "BACKOFFICE" else []
     return usuarios
 
 
@@ -279,7 +279,7 @@ if contar_usuarios() == 0:
             elif len(password) < 4:
                 st.warning("La contraseña debe tener al menos 4 caracteres.")
             else:
-                crear_usuario(nombre, usuario, password, es_admin=True, departamentos=[])
+                crear_usuario(nombre, usuario, password, rol="ADMIN", departamentos=[])
                 st.success("Administrador creado. Recarga la página e inicia sesión.")
                 st.rerun()
     st.stop()
@@ -307,8 +307,8 @@ if st.session_state.usuario_actual is None:
                     "id": u["id"],
                     "nombre": u["nombre"],
                     "usuario": u["usuario"],
-                    "es_admin": u["es_admin"],
-                    "departamentos": [] if u["es_admin"] else obtener_departamentos_de(u["id"]),
+                    "rol": u["rol"],
+                    "departamentos": obtener_departamentos_de(u["id"]) if u["rol"] == "BACKOFFICE" else [],
                 }
                 st.rerun()
             else:
@@ -316,8 +316,10 @@ if st.session_state.usuario_actual is None:
     st.stop()
 
 usuario_actual = st.session_state.usuario_actual
-es_admin = usuario_actual["es_admin"]
-mis_departamentos = DEPARTAMENTOS if es_admin else usuario_actual["departamentos"]
+rol_actual = usuario_actual["rol"]
+es_admin = rol_actual == "ADMIN"
+es_visor = rol_actual == "VISOR"
+mis_departamentos = DEPARTAMENTOS if rol_actual in ("ADMIN", "VISOR") else usuario_actual["departamentos"]
 
 # ============================================================================
 # BARRA LATERAL
@@ -326,7 +328,12 @@ mis_departamentos = DEPARTAMENTOS if es_admin else usuario_actual["departamentos
 st.sidebar.title("📊 Control de Presupuesto")
 st.sidebar.caption("Back Office Regional")
 st.sidebar.markdown(f"**{usuario_actual['nombre']}**")
-st.sidebar.caption("Administrador" if es_admin else " · ".join(mis_departamentos) or "Sin departamento asignado")
+if es_admin:
+    st.sidebar.caption("Administrador")
+elif es_visor:
+    st.sidebar.caption("Visor (solo lectura)")
+else:
+    st.sidebar.caption(" · ".join(mis_departamentos) or "Sin departamento asignado")
 
 if st.sidebar.button("Cerrar sesión"):
     st.session_state.usuario_actual = None
@@ -334,7 +341,10 @@ if st.sidebar.button("Cerrar sesión"):
 
 st.sidebar.markdown("---")
 
-opciones_menu = ["📊 Cuadro Consolidado", "💰 Registrar presupuesto mensual", "🧾 Registrar gasto diario", "📋 Historial de gastos"]
+opciones_menu = ["📊 Cuadro Consolidado"]
+if rol_actual in ("ADMIN", "BACKOFFICE"):
+    opciones_menu += ["💰 Registrar presupuesto mensual", "🧾 Registrar gasto diario"]
+opciones_menu.append("📋 Historial de gastos")
 if es_admin:
     opciones_menu.append("👥 Gestionar Back Office")
 
@@ -350,7 +360,7 @@ st.sidebar.caption(
     "🟢 Dentro del presupuesto (≤80%) · 🟡 Cerca del límite (80–100%) · 🔴 Presupuesto excedido (>100%)"
 )
 
-if not mis_departamentos and not es_admin:
+if not mis_departamentos and rol_actual == "BACKOFFICE":
     st.warning(
         "Todavía no tienes ningún departamento asignado. Comunícate con tu "
         "administrador para que te asigne uno o más desde 'Gestionar Back Office'."
@@ -526,7 +536,7 @@ if pagina == "📊 Cuadro Consolidado":
     st.caption(f"{MESES[mes_sel - 1]} {anio_sel} — Activaciones · Merch · Acciones Comerciales (Dispersión / Incentivos)")
 
     opciones_vista = list(mis_departamentos)
-    if es_admin:
+    if es_admin or es_visor:
         opciones_vista = [FANERO] + opciones_vista
     elif len(mis_departamentos) > 1:
         opciones_vista = ["Mis departamentos (Total)"] + opciones_vista
@@ -678,6 +688,8 @@ elif pagina == "🧾 Registrar gasto diario":
 
 elif pagina == "📋 Historial de gastos":
     st.title("Historial de gastos")
+    if es_visor:
+        st.caption("Vista de solo lectura — fecha, tipo de gasto, descripción y monto registrados por cada Back Office.")
 
     depto_filtro = st.selectbox("Filtrar por departamento", options=["Todos"] + list(mis_departamentos))
     depto_query = None if depto_filtro == "Todos" else depto_filtro
@@ -704,17 +716,18 @@ elif pagina == "📋 Historial de gastos":
             hide_index=True,
         )
 
-        st.markdown("---")
-        st.subheader("Eliminar un registro")
-        opciones = {
-            f"#{str(row.id)[:8]} · {row.fecha} · {row.departamento} · {row.tipo} · S/ {row.monto:,.2f}": row.id
-            for row in tabla.itertuples()
-        }
-        seleccion = st.selectbox("Selecciona el registro a eliminar", options=list(opciones.keys()))
-        if st.button("🗑️ Eliminar registro seleccionado"):
-            eliminar_gasto(opciones[seleccion])
-            st.success("Registro eliminado.")
-            st.rerun()
+        if not es_visor:
+            st.markdown("---")
+            st.subheader("Eliminar un registro")
+            opciones = {
+                f"#{str(row.id)[:8]} · {row.fecha} · {row.departamento} · {row.tipo} · S/ {row.monto:,.2f}": row.id
+                for row in tabla.itertuples()
+            }
+            seleccion = st.selectbox("Selecciona el registro a eliminar", options=list(opciones.keys()))
+            if st.button("🗑️ Eliminar registro seleccionado"):
+                eliminar_gasto(opciones[seleccion])
+                st.success("Registro eliminado.")
+                st.rerun()
 
         st.markdown("---")
         csv = tabla.to_csv(index=False).encode("utf-8")
@@ -726,59 +739,69 @@ elif pagina == "📋 Historial de gastos":
 
 elif pagina == "👥 Gestionar Back Office":
     st.title("Gestionar Back Office")
-    st.caption("Registra cada Back Office y asígnale uno o más departamentos.")
+    st.caption("Registra cada usuario, su rol, y (si es Back Office) sus departamentos.")
 
-    with st.expander("➕ Registrar nuevo Back Office", expanded=True):
+    with st.expander("➕ Registrar nuevo usuario", expanded=True):
         with st.form("form_nuevo_usuario"):
             col1, col2 = st.columns(2)
             with col1:
                 nombre = st.text_input("Nombre completo")
                 usuario_login = st.text_input("Nombre de usuario (para iniciar sesión)")
-            with col2:
                 password = st.text_input("Contraseña", type="password")
-                es_admin_nuevo = st.checkbox("Es administrador (ve y edita todos los departamentos)")
-
-            deptos_nuevo = []
-            if not es_admin_nuevo:
-                deptos_nuevo = st.multiselect(
-                    "Departamento(s) del que es responsable", options=DEPARTAMENTOS
+            with col2:
+                rol_nuevo = st.selectbox(
+                    "Rol",
+                    options=["BACKOFFICE", "VISOR", "ADMIN"],
+                    format_func=lambda r: {
+                        "BACKOFFICE": "👤 Back Office (registra su(s) departamento(s))",
+                        "VISOR": "👁️ Visor (solo ve el Cuadro Consolidado, sin editar)",
+                        "ADMIN": "🛡️ Administrador (acceso total)",
+                    }[r],
                 )
+                deptos_nuevo = []
+                if rol_nuevo == "BACKOFFICE":
+                    deptos_nuevo = st.multiselect(
+                        "Departamento(s) del que es responsable", options=DEPARTAMENTOS
+                    )
 
-            crear = st.form_submit_button("Crear Back Office", type="primary")
+            crear = st.form_submit_button("Crear usuario", type="primary")
 
             if crear:
                 if not nombre or not usuario_login or not password:
                     st.warning("Completa nombre, usuario y contraseña.")
                 elif len(password) < 4:
                     st.warning("La contraseña debe tener al menos 4 caracteres.")
-                elif not es_admin_nuevo and not deptos_nuevo:
-                    st.warning("Asigna al menos un departamento (o marca 'Es administrador').")
+                elif rol_nuevo == "BACKOFFICE" and not deptos_nuevo:
+                    st.warning("Asigna al menos un departamento para un Back Office.")
                 else:
                     try:
-                        crear_usuario(nombre, usuario_login.strip(), password, es_admin_nuevo, deptos_nuevo)
-                        st.success(f"Back Office '{nombre}' creado correctamente.")
+                        crear_usuario(nombre, usuario_login.strip(), password, rol_nuevo, deptos_nuevo)
+                        st.success(f"Usuario '{nombre}' creado correctamente.")
                         st.rerun()
                     except Exception as e:
                         st.error(f"No se pudo crear el usuario (¿nombre de usuario repetido?): {e}")
 
     st.markdown("---")
-    st.subheader("Back Office registrados")
+    st.subheader("Usuarios registrados")
+
+    ETIQUETA_ROL = {
+        "ADMIN": "🛡️ Administrador",
+        "BACKOFFICE": "👤 Back Office",
+        "VISOR": "👁️ Visor",
+    }
 
     usuarios = listar_usuarios()
     if not usuarios:
-        st.info("Aún no hay Back Office registrados.")
+        st.info("Aún no hay usuarios registrados.")
     else:
         for u in usuarios:
             with st.container(border=True):
                 c1, c2, c3 = st.columns([2, 3, 2])
                 with c1:
-                    etiqueta = "🛡️ Administrador" if u["es_admin"] else "👤 Back Office"
                     st.markdown(f"**{u['nombre']}**")
-                    st.caption(f"{etiqueta} · usuario: `{u['usuario']}`")
+                    st.caption(f"{ETIQUETA_ROL.get(u['rol'], u['rol'])} · usuario: `{u['usuario']}`")
                 with c2:
-                    if u["es_admin"]:
-                        st.caption("Acceso a todos los departamentos")
-                    else:
+                    if u["rol"] == "BACKOFFICE":
                         nuevos_deptos = st.multiselect(
                             "Departamentos asignados",
                             options=DEPARTAMENTOS,
@@ -791,6 +814,10 @@ elif pagina == "👥 Gestionar Back Office":
                                 actualizar_departamentos(u["id"], nuevos_deptos)
                                 st.success("Departamentos actualizados.")
                                 st.rerun()
+                    elif u["rol"] == "VISOR":
+                        st.caption("Solo lectura del Cuadro Consolidado (todos los departamentos)")
+                    else:
+                        st.caption("Acceso a todos los departamentos")
                 with c3:
                     if u["usuario"] != usuario_actual["usuario"]:
                         nuevo_estado = st.toggle("Activo", value=u["activo"], key=f"activo_{u['id']}")
