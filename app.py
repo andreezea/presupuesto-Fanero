@@ -172,16 +172,18 @@ def listar_usuarios() -> list[dict]:
 # FUNCIONES DE DATOS: PRESUPUESTO Y GASTOS
 # ============================================================================
 
-def guardar_presupuesto(departamento: str, anio: int, mes: int, monto: float) -> None:
+def guardar_presupuesto(departamento: str, anio: int, mes: int, tipo: str, subtipo: str | None, monto: float) -> None:
     supabase.table("presupuesto_mensual_dep").upsert(
         {
             "departamento": departamento,
             "anio": anio,
             "mes": mes,
+            "tipo": tipo,
+            "subtipo": subtipo or "",
             "monto": monto,
             "actualizado_en": datetime.now().isoformat(),
         },
-        on_conflict="departamento,anio,mes",
+        on_conflict="departamento,anio,mes,tipo,subtipo",
     ).execute()
 
 
@@ -205,7 +207,7 @@ def eliminar_gasto(gasto_id: str) -> None:
 def df_presupuesto(anio: int, mes: int, departamento: str | None = None) -> pd.DataFrame:
     query = (
         supabase.table("presupuesto_mensual_dep")
-        .select("departamento, anio, mes, monto")
+        .select("departamento, anio, mes, tipo, subtipo, monto")
         .eq("anio", anio)
         .eq("mes", mes)
     )
@@ -213,7 +215,7 @@ def df_presupuesto(anio: int, mes: int, departamento: str | None = None) -> pd.D
         query = query.eq("departamento", departamento)
     data = query.execute().data
     if not data:
-        return pd.DataFrame(columns=["departamento", "anio", "mes", "monto"])
+        return pd.DataFrame(columns=["departamento", "anio", "mes", "tipo", "subtipo", "monto"])
     return pd.DataFrame(data)
 
 
@@ -332,7 +334,7 @@ if st.sidebar.button("Cerrar sesión"):
 
 st.sidebar.markdown("---")
 
-opciones_menu = ["📈 Resumen", "💰 Registrar presupuesto mensual", "🧾 Registrar gasto diario", "📋 Historial de gastos"]
+opciones_menu = ["📈 Resumen", "📑 Cuadro Consolidado", "💰 Registrar presupuesto mensual", "🧾 Registrar gasto diario", "📋 Historial de gastos"]
 if es_admin:
     opciones_menu.append("👥 Gestionar Back Office")
 
@@ -376,18 +378,27 @@ def gastado_por_tipo(df_gastos_depto: pd.DataFrame, tipo: str, subtipo: str | No
     return df_gastos_depto.loc[filtro, "monto"].sum()
 
 
+def presupuesto_por_tipo(df_pres_depto: pd.DataFrame, tipo: str, subtipo: str | None) -> float:
+    if df_pres_depto.empty:
+        return 0
+    filtro = df_pres_depto["tipo"] == tipo
+    filtro = filtro & (df_pres_depto["subtipo"] == (subtipo or ""))
+    return df_pres_depto.loc[filtro, "monto"].sum()
+
+
 def tabla_detalle_tipo(departamentos: list[str], pres_df: pd.DataFrame, gas_df: pd.DataFrame, mostrar_departamento: bool) -> pd.DataFrame:
     filas = []
     for depto in departamentos:
-        pres_depto = pres_df.loc[pres_df["departamento"] == depto, "monto"].sum() if not pres_df.empty else 0
+        pres_depto_df = pres_df[pres_df["departamento"] == depto] if not pres_df.empty else pres_df
         gas_depto_df = gas_df[gas_df["departamento"] == depto] if not gas_df.empty else gas_df
         for etiqueta, tipo, subtipo in TIPOS_DETALLE:
+            pres = presupuesto_por_tipo(pres_depto_df, tipo, subtipo)
             gas = gastado_por_tipo(gas_depto_df, tipo, subtipo)
-            disp = pres_depto - gas
-            p = (gas / pres_depto * 100) if pres_depto > 0 else 0
+            disp = pres - gas
+            p = (gas / pres * 100) if pres > 0 else 0
             fila = {
                 "Tipo de gasto": etiqueta,
-                "Presupuesto": pres_depto,
+                "Presupuesto": pres,
                 "Gastado": gas,
                 "Disponible": disp,
                 "% Ejecución": f"{semaforo(p)} {p:.1f}%",
@@ -450,6 +461,10 @@ TABLA_CSS = """
     border-top: 2px solid #1e3a5f;
 }
 .tabla-pivote td.negativo { color: #dc2626; font-weight: 600; }
+.tabla-pivote td.celda-pct { text-align: center; font-weight: 600; }
+.tabla-pivote th.col-total { background-color: #0f2038 !important; }
+.tabla-pivote tbody tr td:nth-last-child(-n+4) { background-color: #eef2ff; }
+.tabla-pivote tr.fila-total td:nth-last-child(-n+4) { background-color: #bfdbfe !important; }
 </style>
 """
 
@@ -463,20 +478,36 @@ def _celda_disponible(v: float) -> str:
     return f'<td class="{clase}">{_fmt(v)}</td>'
 
 
+def _celda_pct(gastado: float, presupuesto: float) -> str:
+    pct = (gastado / presupuesto * 100) if presupuesto > 0 else 0
+    return f'<td class="celda-pct">{semaforo(pct)} {pct:.1f}%</td>'
+
+
 def construir_tabla_pivote_html(departamentos: list[str], pres_df: pd.DataFrame, gas_df: pd.DataFrame, etiqueta_total: str = "FANERO") -> str:
     filas_html = []
     totales = {etq: {"pres": 0.0, "gas": 0.0} for etq, _, _ in TIPOS_DETALLE}
+    total_general = {"pres": 0.0, "gas": 0.0}
 
     for depto in departamentos:
-        pres_depto = pres_df.loc[pres_df["departamento"] == depto, "monto"].sum() if not pres_df.empty else 0
+        pres_depto_df = pres_df[pres_df["departamento"] == depto] if not pres_df.empty else pres_df
         gas_depto_df = gas_df[gas_df["departamento"] == depto] if not gas_df.empty else gas_df
+        pres_depto_total = 0.0
+        gas_depto_total = 0.0
         celdas = f'<td class="col-depto">{depto.upper()}</td>'
         for etiqueta, tipo, subtipo in TIPOS_DETALLE:
+            pres = presupuesto_por_tipo(pres_depto_df, tipo, subtipo)
             gas = gastado_por_tipo(gas_depto_df, tipo, subtipo)
-            disp = pres_depto - gas
-            totales[etiqueta]["pres"] += pres_depto
+            disp = pres - gas
+            totales[etiqueta]["pres"] += pres
             totales[etiqueta]["gas"] += gas
-            celdas += f"<td>{_fmt(pres_depto)}</td><td>{_fmt(gas)}</td>{_celda_disponible(disp)}"
+            pres_depto_total += pres
+            gas_depto_total += gas
+            celdas += f"<td>{_fmt(pres)}</td><td>{_fmt(gas)}</td>{_celda_disponible(disp)}{_celda_pct(gas, pres)}"
+        # columna final TOTAL: suma de los 4 presupuestos y de los 4 gastos de este departamento
+        disp_depto_total = pres_depto_total - gas_depto_total
+        celdas += f"<td>{_fmt(pres_depto_total)}</td><td>{_fmt(gas_depto_total)}</td>{_celda_disponible(disp_depto_total)}{_celda_pct(gas_depto_total, pres_depto_total)}"
+        total_general["pres"] += pres_depto_total
+        total_general["gas"] += gas_depto_total
         filas_html.append(f"<tr>{celdas}</tr>")
 
     celdas_total = f'<td class="col-depto">{etiqueta_total}</td>'
@@ -484,13 +515,25 @@ def construir_tabla_pivote_html(departamentos: list[str], pres_df: pd.DataFrame,
         pres_t = totales[etiqueta]["pres"]
         gas_t = totales[etiqueta]["gas"]
         disp_t = pres_t - gas_t
-        celdas_total += f"<td>{_fmt(pres_t)}</td><td>{_fmt(gas_t)}</td>{_celda_disponible(disp_t)}"
+        celdas_total += f"<td>{_fmt(pres_t)}</td><td>{_fmt(gas_t)}</td>{_celda_disponible(disp_t)}{_celda_pct(gas_t, pres_t)}"
+    disp_general = total_general["pres"] - total_general["gas"]
+    celdas_total += (
+        f"<td>{_fmt(total_general['pres'])}</td><td>{_fmt(total_general['gas'])}</td>"
+        f"{_celda_disponible(disp_general)}{_celda_pct(total_general['gas'], total_general['pres'])}"
+    )
     fila_total_html = f'<tr class="fila-total">{celdas_total}</tr>'
 
+    etiquetas_columnas = [etq for etq, _, _ in TIPOS_DETALLE] + ["TOTAL"]
     encabezado_top = '<th class="col-depto" rowspan="2">DEPARTAMENTO</th>' + "".join(
-        f'<th colspan="3">{etiqueta.upper()}</th>' for etiqueta, _, _ in TIPOS_DETALLE
+        f'<th colspan="4"{" class=\"col-total\"" if etq == "TOTAL" else ""}>{etq.upper()}</th>' for etq in etiquetas_columnas
     )
-    encabezado_sub = "".join("<th>PRESUPUESTO</th><th>GASTADO</th><th>DISPONIBLE</th>" for _ in TIPOS_DETALLE)
+    encabezado_sub = "".join(
+        f'<th{" class=\"col-total\"" if etq == "TOTAL" else ""}>PRESUPUESTO</th>'
+        f'<th{" class=\"col-total\"" if etq == "TOTAL" else ""}>GASTADO</th>'
+        f'<th{" class=\"col-total\"" if etq == "TOTAL" else ""}>DISPONIBLE</th>'
+        f'<th{" class=\"col-total\"" if etq == "TOTAL" else ""}>% EJECUCIÓN</th>'
+        for etq in etiquetas_columnas
+    )
 
     html = f"""{TABLA_CSS}
 <div class="tabla-pivote-wrap">
@@ -572,11 +615,7 @@ if pagina == "📈 Resumen":
         )
         st.bar_chart(tabla.set_index("Departamento")[["Presupuesto", "Gastado"]])
 
-        st.markdown("---")
-        st.subheader("Cuadro consolidado por departamento y tipo de gasto")
-        etiqueta_total = FANERO if depto_vista == FANERO else "TOTAL"
-        html_pivote = construir_tabla_pivote_html(alcance, pres_df, gas_df, etiqueta_total=etiqueta_total)
-        st.markdown(html_pivote, unsafe_allow_html=True)
+        st.info("💡 Para ver el detalle por tipo de gasto (Activaciones, Merch, Acciones Comerciales) de cada departamento, ve a **📑 Cuadro Consolidado** en el menú.")
     else:
         st.subheader("Detalle por tipo de gasto")
         st.caption("Activaciones · Merch · Acciones Comerciales (Dispersión / Incentivos)")
@@ -588,20 +627,53 @@ if pagina == "📈 Resumen":
             st.bar_chart(tabla_tipo.set_index("Tipo de gasto")[["Gastado"]])
 
 # ============================================================================
+# PÁGINA: CUADRO CONSOLIDADO
+# ============================================================================
+
+elif pagina == "📑 Cuadro Consolidado":
+    st.title("Cuadro consolidado por departamento y tipo de gasto")
+    st.caption(f"{MESES[mes_sel - 1]} {anio_sel} — Activaciones · Merch · Acciones Comerciales (Dispersión / Incentivos)")
+
+    opciones_vista_cc = list(mis_departamentos)
+    if es_admin:
+        opciones_vista_cc = [FANERO] + opciones_vista_cc
+    elif len(mis_departamentos) > 1:
+        opciones_vista_cc = ["Mis departamentos (Total)"] + opciones_vista_cc
+
+    vista_cc = st.selectbox("Alcance", options=opciones_vista_cc, key="alcance_cuadro_consolidado")
+
+    if vista_cc in (FANERO, "Mis departamentos (Total)"):
+        alcance_cc = DEPARTAMENTOS if vista_cc == FANERO else mis_departamentos
+        etiqueta_total_cc = FANERO if vista_cc == FANERO else "TOTAL"
+    else:
+        alcance_cc = [vista_cc]
+        etiqueta_total_cc = "TOTAL"
+
+    pres_df_cc = df_presupuesto(anio_sel, mes_sel)
+    gas_df_cc = df_gastos(anio_sel, mes_sel)
+
+    html_pivote = construir_tabla_pivote_html(alcance_cc, pres_df_cc, gas_df_cc, etiqueta_total=etiqueta_total_cc)
+    st.markdown(html_pivote, unsafe_allow_html=True)
+
+# ============================================================================
 # PÁGINA: REGISTRAR PRESUPUESTO MENSUAL
 # ============================================================================
 
 elif pagina == "💰 Registrar presupuesto mensual":
     st.title("Registrar presupuesto mensual")
-    st.caption("Asigna o actualiza el presupuesto del mes para tu departamento.")
+    st.caption("Asigna o actualiza el presupuesto del mes para cada tipo de gasto de tu departamento.")
 
     with st.form("form_presupuesto"):
         col1, col2 = st.columns(2)
         with col1:
             departamento = st.selectbox("Departamento", options=mis_departamentos)
             anio = st.number_input("Año", min_value=2000, max_value=2100, value=anio_sel, step=1)
-        with col2:
             mes = st.selectbox("Mes", options=list(range(1, 13)), format_func=lambda m: MESES[m - 1], index=mes_sel - 1)
+        with col2:
+            tipo = st.selectbox("Tipo de gasto", options=TIPOS_GASTO)
+            subtipo = None
+            if tipo == "Acciones Comerciales":
+                subtipo = st.selectbox("Subtipo de Acciones Comerciales", options=SUBTIPOS_ACCIONES_COMERCIALES)
             monto = st.number_input("Presupuesto Asignado (S/)", min_value=0.0, step=100.0, format="%.2f")
 
         enviado = st.form_submit_button("Guardar presupuesto", type="primary")
@@ -610,9 +682,10 @@ elif pagina == "💰 Registrar presupuesto mensual":
             if monto <= 0:
                 st.warning("Ingresa un monto de presupuesto mayor a cero.")
             else:
-                guardar_presupuesto(departamento, int(anio), int(mes), float(monto))
+                guardar_presupuesto(departamento, int(anio), int(mes), tipo, subtipo, float(monto))
+                etiqueta_tipo = f"{tipo} - {subtipo}" if subtipo else tipo
                 st.success(
-                    f"Presupuesto guardado: {departamento} — {MESES[mes - 1]} {anio} — {formato_soles(monto)}"
+                    f"Presupuesto guardado: {departamento} — {etiqueta_tipo} — {MESES[mes - 1]} {anio} — {formato_soles(monto)}"
                 )
                 st.rerun()
 
@@ -624,9 +697,15 @@ elif pagina == "💰 Registrar presupuesto mensual":
     if tabla.empty:
         st.info("Todavía no hay presupuestos registrados para este mes.")
     else:
+        tabla = tabla.copy()
+        tabla["Tipo de gasto"] = tabla.apply(
+            lambda r: f"{r['tipo']} - {r['subtipo']}" if r["subtipo"] else r["tipo"], axis=1
+        )
         tabla = tabla.rename(columns={"departamento": "Departamento", "monto": "Presupuesto"})
         st.dataframe(
-            tabla[["Departamento", "Presupuesto"]].style.format({"Presupuesto": "S/ {:,.2f}"}),
+            tabla[["Departamento", "Tipo de gasto", "Presupuesto"]]
+            .sort_values(["Departamento", "Tipo de gasto"])
+            .style.format({"Presupuesto": "S/ {:,.2f}"}),
             use_container_width=True,
             hide_index=True,
         )
