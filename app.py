@@ -564,29 +564,38 @@ if pagina == "📊 Cuadro Consolidado":
     st.title("Cuadro Consolidado")
     st.caption(f"{MESES[mes_sel - 1]} {anio_sel} — Activaciones · Merch · Acciones Comerciales (Dispersión / Incentivos)")
 
-    # ── 3 filtros en cascada ─────────────────────────────
+    # ── 3 filtros en cascada: KAM → Jefe KAM → Departamento ─
+    # Mapeo inverso: KAM → su Jefe KAM
+    _JEFE_DE_KAM = {
+        kam: jefe
+        for jefe, jefe_deptos in JEFES_KAM.items()
+        for kam, kam_deptos in KAMS.items()
+        if any(d in jefe_deptos for d in kam_deptos)
+    }
+
     _f1, _f2, _f3 = st.columns(3)
 
-    # 1) Jefe KAM
-    sel_jefe = _f1.selectbox(
-        "👤 Jefe KAM",
-        options=["Todos"] + list(JEFES_KAM.keys()),
-        key="fil_jefe",
-    )
+    # 1) KAM — todas las opciones disponibles
+    _kams_base = list(KAMS.keys()) if (es_admin or es_visor) else \
+                 [k for k, ds in KAMS.items() if any(d in mis_departamentos for d in ds)]
+    sel_kam = _f1.selectbox("🧑‍💼 KAM", options=["Todos"] + _kams_base, key="fil_kam")
 
-    # 2) KAM — filtrado según Jefe seleccionado
+    # 2) Jefe KAM — si hay KAM seleccionado, solo muestra su jefe
+    if sel_kam != "Todos":
+        _jefes_disp = [_JEFE_DE_KAM[sel_kam]]
+    else:
+        _jefes_disp = list(JEFES_KAM.keys())
+    sel_jefe = _f2.selectbox("👤 Jefe KAM", options=["Todos"] + _jefes_disp, key="fil_jefe")
+
+    # 3) Departamento — filtrado por KAM y/o Jefe
     _jefe_deptos = JEFES_KAM.get(sel_jefe, DEPARTAMENTOS) if sel_jefe != "Todos" else DEPARTAMENTOS
-    _kams_disp = ["Todos"] + [k for k, ds in KAMS.items()
-                               if any(d in _jefe_deptos for d in ds)]
-    sel_kam = _f2.selectbox("🧑‍💼 KAM", options=_kams_disp, key="fil_kam")
-
-    # 3) Departamento — filtrado según KAM y Jefe seleccionados
     if sel_kam != "Todos":
         _deptos_disp = [d for d in KAMS[sel_kam] if d in _jefe_deptos]
     else:
         _deptos_disp = list(_jefe_deptos)
 
-    _base_deptos = _deptos_disp if (es_admin or es_visor) else                    [d for d in mis_departamentos if d in _deptos_disp]
+    _base_deptos = _deptos_disp if (es_admin or es_visor) else \
+                   [d for d in mis_departamentos if d in _deptos_disp]
     sel_depto = _f3.selectbox(
         "🗺️ Departamento",
         options=["Todos"] + _base_deptos,
