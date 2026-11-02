@@ -564,59 +564,69 @@ if pagina == "📊 Cuadro Consolidado":
     st.title("Cuadro Consolidado")
     st.caption(f"{MESES[mes_sel - 1]} {anio_sel} — Activaciones · Merch · Acciones Comerciales (Dispersión / Incentivos)")
 
-    # ── 3 filtros en cascada bidireccional ───────────────────
-    # Mapeo inverso: KAM → su Jefe KAM
-    _JEFE_DE_KAM = {
-        kam: jefe
-        for jefe, jefe_deptos in JEFES_KAM.items()
-        for kam, kam_deptos in KAMS.items()
-        if any(d in jefe_deptos for d in kam_deptos)
+    # ── Mapeos para filtros bidireccionales ──────────────────
+    _JEFE_DE_KAM: dict[str, str] = {
+        k: jefe
+        for jefe, jdeps in JEFES_KAM.items()
+        for k, kdeps in KAMS.items()
+        if any(d in jdeps for d in kdeps)
+    }
+    _KAM_DE_DEPTO: dict[str, str] = {
+        d: k for k, ds in KAMS.items() for d in ds
     }
 
-    _f1, _f2, _f3 = st.columns(3)
+    # ── Leer selecciones del render anterior ─────────────────
+    _prev_jefe = st.session_state.get("fil_jefe", "Todos")
+    _prev_kam  = st.session_state.get("fil_kam",  "Todos")
+    _prev_dep  = st.session_state.get("fil_depto", "Todos")
 
-    # Leer KAM del render anterior para filtrar Jefe antes de renderizarlo
-    _prev_kam = st.session_state.get("fil_kam", "Todos")
+    # ── Calcular opciones válidas por intersección ────────────
+    _valid_jefes = list(JEFES_KAM.keys())
+    _valid_kams  = list(KAMS.keys())
+    _valid_deps  = list(DEPARTAMENTOS)
+
+    if _prev_dep != "Todos":
+        _k = _KAM_DE_DEPTO.get(_prev_dep)
+        if _k:
+            _valid_kams  = [_k]
+            _valid_jefes = [_JEFE_DE_KAM[_k]]
+
     if _prev_kam != "Todos":
-        _jefes_opts = ["Todos", _JEFE_DE_KAM[_prev_kam]]
-        # Si el Jefe actual es incompatible con el KAM, resetear
-        if st.session_state.get("fil_jefe", "Todos") not in _jefes_opts:
-            st.session_state["fil_jefe"] = "Todos"
-    else:
-        _jefes_opts = ["Todos"] + list(JEFES_KAM.keys())
+        _valid_jefes = [j for j in _valid_jefes if j == _JEFE_DE_KAM.get(_prev_kam)]
+        _valid_deps  = [d for d in _valid_deps if d in KAMS.get(_prev_kam, [])]
 
-    # 1) Jefe KAM — filtrado si hay KAM seleccionado
-    sel_jefe = _f1.selectbox("👤 Jefe KAM", options=_jefes_opts, key="fil_jefe")
+    if _prev_jefe != "Todos":
+        _jdeps = set(JEFES_KAM.get(_prev_jefe, []))
+        _valid_kams  = [k for k in _valid_kams if any(d in _jdeps for d in KAMS.get(k, []))]
+        _valid_deps  = [d for d in _valid_deps if d in _jdeps]
 
-    # 2) KAM — filtrado según Jefe seleccionado
-    _jefe_deptos = JEFES_KAM.get(sel_jefe, DEPARTAMENTOS) if sel_jefe != "Todos" else DEPARTAMENTOS
-    _kams_disp = ["Todos"] + [k for k, ds in KAMS.items()
-                               if any(d in _jefe_deptos for d in ds)]
-    sel_kam = _f2.selectbox("🧑‍💼 KAM", options=_kams_disp, key="fil_kam")
+    # ── Resetear selecciones que ya no son válidas ────────────
+    if _prev_jefe != "Todos" and _prev_jefe not in _valid_jefes:
+        st.session_state["fil_jefe"] = "Todos"
+    if _prev_kam != "Todos" and _prev_kam not in _valid_kams:
+        st.session_state["fil_kam"] = "Todos"
+    if _prev_dep != "Todos" and _prev_dep not in _valid_deps:
+        st.session_state["fil_depto"] = "Todos"
 
-    # 3) Departamento — filtrado según KAM y Jefe seleccionados
-    if sel_kam != "Todos":
-        _deptos_disp = [d for d in KAMS[sel_kam] if d in _jefe_deptos]
-    else:
-        _deptos_disp = list(_jefe_deptos)
+    # ── Renderizar los 3 selectboxes ──────────────────────────
+    _f1, _f2, _f3 = st.columns(3)
+    sel_jefe  = _f1.selectbox("👤 Jefe KAM",    options=["Todos"] + _valid_jefes, key="fil_jefe")
+    sel_kam   = _f2.selectbox("🧑‍💼 KAM",         options=["Todos"] + _valid_kams,  key="fil_kam")
+    _base_deps = _valid_deps if (es_admin or es_visor) else \
+                 [d for d in mis_departamentos if d in _valid_deps]
+    sel_depto = _f3.selectbox("🗺️ Departamento", options=["Todos"] + _base_deps,   key="fil_depto")
 
-    _base_deptos = _deptos_disp if (es_admin or es_visor) else \
-                   [d for d in mis_departamentos if d in _deptos_disp]
-    sel_depto = _f3.selectbox(
-        "🗺️ Departamento",
-        options=["Todos"] + _base_deptos,
-        key="fil_depto",
-    )
-
-    # ── Determinar alcance y etiqueta ─────────────────────
+    # ── Determinar alcance y etiqueta ─────────────────────────
     if sel_depto != "Todos":
         alcance = [sel_depto]
         etiqueta_total = sel_depto
     elif sel_kam != "Todos":
-        alcance = _deptos_disp
+        alcance = [d for d in KAMS[sel_kam]
+                   if (es_admin or es_visor) or d in mis_departamentos]
         etiqueta_total = sel_kam
     elif sel_jefe != "Todos":
-        alcance = _deptos_disp
+        alcance = [d for d in JEFES_KAM[sel_jefe]
+                   if (es_admin or es_visor) or d in mis_departamentos]
         etiqueta_total = sel_jefe
     else:
         alcance = DEPARTAMENTOS if (es_admin or es_visor) else mis_departamentos
