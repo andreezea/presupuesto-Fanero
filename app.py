@@ -39,10 +39,21 @@ st.set_page_config(
 )
 
 DEPARTAMENTOS = [
-    "Amazonas", "Cajamarca", "Huancavelica", "Huanuco", "Junin",
-    "Loreto", "Pasco", "San Martín", "Ucayali",
+    "Amazonas", "Cajamarca", "Junin",
+    "Loreto", "San Martín", "Ucayali",
 ]
 FANERO = "Fanero"
+
+JEFES_KAM: dict[str, list[str]] = {
+    "Ivan Díaz":         ["Amazonas", "Cajamarca"],
+    "Leandro Custodio":  ["Junin", "Loreto", "San Martín", "Ucayali"],
+}
+
+KAMS: dict[str, list[str]] = {
+    "Fiorella Mera":   ["Junin"],
+    "Miguel Dejo":     ["Amazonas", "Cajamarca"],
+    "Christian Colan": ["San Martín", "Loreto", "Ucayali"],
+}
 
 TIPOS_GASTO = ["Activaciones", "Merch", "Acciones Comerciales"]
 SUBTIPOS_ACCIONES_COMERCIALES = ["Dispersión", "Incentivos"]
@@ -555,25 +566,39 @@ if pagina == "📊 Cuadro Consolidado":
 
     opciones_vista = list(mis_departamentos)
     if es_admin or es_visor:
-        opciones_vista = [FANERO] + opciones_vista
+        opciones_vista = [FANERO]
+        for _j in JEFES_KAM:
+            opciones_vista.append(f"Jefe KAM: {_j}")
+        for _k in KAMS:
+            opciones_vista.append(f"KAM: {_k}")
+        opciones_vista += list(DEPARTAMENTOS)
     elif len(mis_departamentos) > 1:
         opciones_vista = ["Mis departamentos (Total)"] + opciones_vista
 
-    depto_vista = st.selectbox("Departamento", options=opciones_vista)
+    depto_vista = st.selectbox("Vista", options=opciones_vista)
 
     pres_df = df_presupuesto(anio_sel, mes_sel)
     gas_df = df_gastos(anio_sel, mes_sel)
 
-    if depto_vista in (FANERO, "Mis departamentos (Total)"):
-        alcance = DEPARTAMENTOS if depto_vista == FANERO else mis_departamentos
-        etiqueta_total = FANERO if depto_vista == FANERO else "TOTAL"
-        presupuesto_total = pres_df.loc[pres_df["departamento"].isin(alcance), "monto"].sum() if not pres_df.empty else 0
-        gastado_total = gas_df.loc[gas_df["departamento"].isin(alcance), "monto"].sum() if not gas_df.empty else 0
+    if depto_vista == FANERO:
+        alcance = DEPARTAMENTOS
+        etiqueta_total = FANERO
+    elif depto_vista == "Mis departamentos (Total)":
+        alcance = mis_departamentos
+        etiqueta_total = "TOTAL"
+    elif depto_vista.startswith("Jefe KAM: "):
+        _jefe = depto_vista.replace("Jefe KAM: ", "")
+        alcance = JEFES_KAM[_jefe]
+        etiqueta_total = _jefe
+    elif depto_vista.startswith("KAM: "):
+        _kam = depto_vista.replace("KAM: ", "")
+        alcance = KAMS[_kam]
+        etiqueta_total = _kam
     else:
         alcance = [depto_vista]
         etiqueta_total = "TOTAL"
-        presupuesto_total = pres_df.loc[pres_df["departamento"] == depto_vista, "monto"].sum() if not pres_df.empty else 0
-        gastado_total = gas_df.loc[gas_df["departamento"] == depto_vista, "monto"].sum() if not gas_df.empty else 0
+    presupuesto_total = pres_df.loc[pres_df["departamento"].isin(alcance), "monto"].sum() if not pres_df.empty else 0
+    gastado_total = gas_df.loc[gas_df["departamento"].isin(alcance), "monto"].sum() if not gas_df.empty else 0
 
     disponible = presupuesto_total - gastado_total
     pct = (gastado_total / presupuesto_total * 100) if presupuesto_total > 0 else 0
