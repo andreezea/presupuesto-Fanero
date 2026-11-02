@@ -564,41 +564,54 @@ if pagina == "📊 Cuadro Consolidado":
     st.title("Cuadro Consolidado")
     st.caption(f"{MESES[mes_sel - 1]} {anio_sel} — Activaciones · Merch · Acciones Comerciales (Dispersión / Incentivos)")
 
-    opciones_vista = list(mis_departamentos)
-    if es_admin or es_visor:
-        opciones_vista = [FANERO]
-        for _j in JEFES_KAM:
-            opciones_vista.append(f"Jefe KAM: {_j}")
-        for _k in KAMS:
-            opciones_vista.append(f"KAM: {_k}")
-        opciones_vista += list(DEPARTAMENTOS)
-    elif len(mis_departamentos) > 1:
-        opciones_vista = ["Mis departamentos (Total)"] + opciones_vista
+    # ── 3 filtros en cascada ─────────────────────────────
+    _f1, _f2, _f3 = st.columns(3)
 
-    depto_vista = st.selectbox("Vista", options=opciones_vista)
+    # 1) Jefe KAM
+    sel_jefe = _f1.selectbox(
+        "👤 Jefe KAM",
+        options=["Todos"] + list(JEFES_KAM.keys()),
+        key="fil_jefe",
+    )
+
+    # 2) KAM — filtrado según Jefe seleccionado
+    _jefe_deptos = JEFES_KAM.get(sel_jefe, DEPARTAMENTOS) if sel_jefe != "Todos" else DEPARTAMENTOS
+    _kams_disp = ["Todos"] + [k for k, ds in KAMS.items()
+                               if any(d in _jefe_deptos for d in ds)]
+    sel_kam = _f2.selectbox("🧑‍💼 KAM", options=_kams_disp, key="fil_kam")
+
+    # 3) Departamento — filtrado según KAM y Jefe seleccionados
+    if sel_kam != "Todos":
+        _deptos_disp = [d for d in KAMS[sel_kam] if d in _jefe_deptos]
+    else:
+        _deptos_disp = list(_jefe_deptos)
+
+    _base_deptos = _deptos_disp if (es_admin or es_visor) else                    [d for d in mis_departamentos if d in _deptos_disp]
+    sel_depto = _f3.selectbox(
+        "🗺️ Departamento",
+        options=["Todos"] + _base_deptos,
+        key="fil_depto",
+    )
+
+    # ── Determinar alcance y etiqueta ─────────────────────
+    if sel_depto != "Todos":
+        alcance = [sel_depto]
+        etiqueta_total = sel_depto
+    elif sel_kam != "Todos":
+        alcance = _deptos_disp
+        etiqueta_total = sel_kam
+    elif sel_jefe != "Todos":
+        alcance = _deptos_disp
+        etiqueta_total = sel_jefe
+    else:
+        alcance = DEPARTAMENTOS if (es_admin or es_visor) else mis_departamentos
+        etiqueta_total = FANERO if (es_admin or es_visor) else "TOTAL"
 
     pres_df = df_presupuesto(anio_sel, mes_sel)
-    gas_df = df_gastos(anio_sel, mes_sel)
+    gas_df  = df_gastos(anio_sel, mes_sel)
 
-    if depto_vista == FANERO:
-        alcance = DEPARTAMENTOS
-        etiqueta_total = FANERO
-    elif depto_vista == "Mis departamentos (Total)":
-        alcance = mis_departamentos
-        etiqueta_total = "TOTAL"
-    elif depto_vista.startswith("Jefe KAM: "):
-        _jefe = depto_vista.replace("Jefe KAM: ", "")
-        alcance = JEFES_KAM[_jefe]
-        etiqueta_total = _jefe
-    elif depto_vista.startswith("KAM: "):
-        _kam = depto_vista.replace("KAM: ", "")
-        alcance = KAMS[_kam]
-        etiqueta_total = _kam
-    else:
-        alcance = [depto_vista]
-        etiqueta_total = "TOTAL"
     presupuesto_total = pres_df.loc[pres_df["departamento"].isin(alcance), "monto"].sum() if not pres_df.empty else 0
-    gastado_total = gas_df.loc[gas_df["departamento"].isin(alcance), "monto"].sum() if not gas_df.empty else 0
+    gastado_total     = gas_df.loc[gas_df["departamento"].isin(alcance),  "monto"].sum() if not gas_df.empty else 0
 
     disponible = presupuesto_total - gastado_total
     pct = (gastado_total / presupuesto_total * 100) if presupuesto_total > 0 else 0
