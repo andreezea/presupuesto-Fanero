@@ -564,7 +564,7 @@ if pagina == "📊 Cuadro Consolidado":
     st.title("Cuadro Consolidado")
     st.caption(f"{MESES[mes_sel - 1]} {anio_sel} — Activaciones · Merch · Acciones Comerciales (Dispersión / Incentivos)")
 
-    # ── 3 filtros en cascada: KAM → Jefe KAM → Departamento ─
+    # ── 3 filtros en cascada bidireccional ───────────────────
     # Mapeo inverso: KAM → su Jefe KAM
     _JEFE_DE_KAM = {
         kam: jefe
@@ -575,20 +575,26 @@ if pagina == "📊 Cuadro Consolidado":
 
     _f1, _f2, _f3 = st.columns(3)
 
-    # 1) KAM — todas las opciones disponibles
-    _kams_base = list(KAMS.keys()) if (es_admin or es_visor) else \
-                 [k for k, ds in KAMS.items() if any(d in mis_departamentos for d in ds)]
-    sel_kam = _f1.selectbox("🧑‍💼 KAM", options=["Todos"] + _kams_base, key="fil_kam")
-
-    # 2) Jefe KAM — si hay KAM seleccionado, solo muestra su jefe
-    if sel_kam != "Todos":
-        _jefes_disp = [_JEFE_DE_KAM[sel_kam]]
+    # Leer KAM del render anterior para filtrar Jefe antes de renderizarlo
+    _prev_kam = st.session_state.get("fil_kam", "Todos")
+    if _prev_kam != "Todos":
+        _jefes_opts = ["Todos", _JEFE_DE_KAM[_prev_kam]]
+        # Si el Jefe actual es incompatible con el KAM, resetear
+        if st.session_state.get("fil_jefe", "Todos") not in _jefes_opts:
+            st.session_state["fil_jefe"] = "Todos"
     else:
-        _jefes_disp = list(JEFES_KAM.keys())
-    sel_jefe = _f2.selectbox("👤 Jefe KAM", options=["Todos"] + _jefes_disp, key="fil_jefe")
+        _jefes_opts = ["Todos"] + list(JEFES_KAM.keys())
 
-    # 3) Departamento — filtrado por KAM y/o Jefe
+    # 1) Jefe KAM — filtrado si hay KAM seleccionado
+    sel_jefe = _f1.selectbox("👤 Jefe KAM", options=_jefes_opts, key="fil_jefe")
+
+    # 2) KAM — filtrado según Jefe seleccionado
     _jefe_deptos = JEFES_KAM.get(sel_jefe, DEPARTAMENTOS) if sel_jefe != "Todos" else DEPARTAMENTOS
+    _kams_disp = ["Todos"] + [k for k, ds in KAMS.items()
+                               if any(d in _jefe_deptos for d in ds)]
+    sel_kam = _f2.selectbox("🧑‍💼 KAM", options=_kams_disp, key="fil_kam")
+
+    # 3) Departamento — filtrado según KAM y Jefe seleccionados
     if sel_kam != "Todos":
         _deptos_disp = [d for d in KAMS[sel_kam] if d in _jefe_deptos]
     else:
