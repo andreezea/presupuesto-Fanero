@@ -1000,10 +1000,11 @@ elif pagina == "👥 Gestionar Back Office":
                     st.caption(f"{ETIQUETA_ROL.get(u['rol'], u['rol'])} · usuario: `{u['usuario']}`")
                 with c2:
                     if u["rol"] == "BACKOFFICE":
+                        _deptos_validos = [d for d in (u["departamentos"] or []) if d in DEPARTAMENTOS]
                         nuevos_deptos = st.multiselect(
                             "Departamentos asignados",
                             options=DEPARTAMENTOS,
-                            default=u["departamentos"],
+                            default=_deptos_validos,
                             key=f"deptos_{u['id']}",
                             label_visibility="collapsed",
                         )
